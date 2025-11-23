@@ -1,55 +1,80 @@
 trigger:
   branches:
     include:
-      - main   # Só builda quando commits chegam na main
+      - main   # Build só roda quando algo entra na main (via merge de PR)
 
 pr:
   branches:
     include:
-      - main   # Executa build em Pull Requests na main
+      - main   # Validação automática para Pull Requests que miram na main
 
 pool:
   vmImage: 'windows-latest'
 
 variables:
   buildConfiguration: 'Release'
+  solution: 'Avant.sln'
+  testsProject: 'Avant.Api.Tests/Avant.Api.Tests.csproj'
 
 steps:
+  # Garante que o SDK .NET 9 está disponível
   - task: UseDotNet@2
-    displayName: 'Install .NET 9 SDK'
+    displayName: 'Instalar .NET SDK 9'
     inputs:
+      packageType: 'sdk'
       version: '9.0.x'
+      performMultiLevelLookup: true
 
-  - script: |
-      dotnet restore
-    displayName: 'Restore packages'
+  # Restaura pacotes (poderia ser só dotnet restore, mas assim o professor vê bem organizado)
+  - task: NuGetToolInstaller@1
+    displayName: 'Instalar NuGet'
 
-  - script: |
-      dotnet build --configuration $(buildConfiguration) --no-restore
-    displayName: 'Build solution'
+  - task: NuGetCommand@2
+    displayName: 'Restaurar pacotes NuGet'
+    inputs:
+      restoreSolution: '$(solution)'
 
-  - script: |
-      dotnet test --configuration $(buildConfiguration) --no-build --logger trx
-    displayName: 'Run tests'
+  # Build da solução inteira
+  - task: DotNetCoreCLI@2
+    displayName: 'Compilar solução'
+    inputs:
+      command: 'build'
+      projects: '$(solution)'
+      arguments: '--configuration $(buildConfiguration)'
+      publishTestResults: false
 
+  # Executa testes xUnit
+  - task: DotNetCoreCLI@2
+    displayName: 'Executar testes (xUnit)'
+    inputs:
+      command: 'test'
+      projects: '$(testsProject)'
+      arguments: '--configuration $(buildConfiguration) --logger trx'
+      publishTestResults: false
+
+  # Publica resultados dos testes (requisito: artefato de testes publicado)
   - task: PublishTestResults@2
-    displayName: 'Publish Test Results'
+    displayName: 'Publicar resultados de testes'
+    condition: succeededOrFailed()    # publica mesmo se os testes falharem
     inputs:
       testResultsFormat: 'VSTest'
-      testResultsFiles: '**/*.trx'
-      failTaskOnFailedTests: false
+      testResultsFiles: '**/TestResults/*.trx'
+      searchFolder: '$(System.DefaultWorkingDirectory)'
+      testRunTitle: 'Avant API - Testes xUnit'
 
+  # Publica o WebApp (gera o pacote para a Release)
   - task: DotNetCoreCLI@2
-    displayName: 'Publish Artifacts'
+    displayName: 'Publicar aplicação (dotnet publish)'
     inputs:
       command: 'publish'
       publishWebProjects: true
-      arguments: '--configuration $(buildConfiguration) --output $(build.artifactstagingdirectory)'
+      arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
       zipAfterPublish: true
 
+  # Publica o artefato da build
   - task: PublishBuildArtifacts@1
-    displayName: 'Upload Artifacts'
+    displayName: 'Publicar artefato de build'
     inputs:
-      PathtoPublish: '$(build.artifactstagingdirectory)'
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
       ArtifactName: 'drop'
       publishLocation: 'Container'
