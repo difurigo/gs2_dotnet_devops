@@ -4,20 +4,19 @@
 
     Recursos criados:
     - Resource Group
-    - App Service Plan (Linux)
-    - Web App (.NET 9)
+    - App Service Plan (Windows)
+    - Web App
     - Azure SQL Server
     - Azure SQL Database
     - Connection String (DefaultConnection) no Web App
 
-    Uso (exemplo no Cloud Shell / PowerShell):
+    Uso (exemplo no PowerShell da sua máquina):
 
     ./script-infra-app.ps1 `
         -prefix "avantgs2" `
         -location "brazilsouth" `
         -sqlAdmin "avantadmin" `
         -sqlPassword "SuaSenhaForteAqui123!"
-
 #>
 
 param(
@@ -50,20 +49,18 @@ az group create `
     --location $location `
     | Out-Null
 
-Write-Output "[2/5] Criando App Service Plan (Linux)..."
+Write-Output "[2/5] Criando App Service Plan (Windows)..."
 az appservice plan create `
     --name $plan `
     --resource-group $rg `
     --sku B1 `
-    --is-linux `
     | Out-Null
 
-Write-Output "[3/5] Criando Web App (.NET 9, Linux)..."
+Write-Output "[3/5] Criando Web App..."
 az webapp create `
     --name $app `
     --resource-group $rg `
     --plan $plan `
-    --runtime "DOTNET|9.0" `
     | Out-Null
 
 Write-Output "[4/5] Criando Azure SQL Server..."
@@ -101,5 +98,5 @@ Write-Output "Web App...............: $app"
 Write-Output "SQL Server............: $sql"
 Write-Output "SQL Database..........: $db"
 Write-Output "`nImportante:"
-Write-Output "- A API, em ambiente Production, usará UseSqlServer com a connection string 'DefaultConnection'."
+Write-Output "- Em Production (Azure), a API usa UseSqlServer com a connection string 'DefaultConnection'."
 Write-Output "- Dados sensíveis ficaram só na configuração do Web App, não no código."
