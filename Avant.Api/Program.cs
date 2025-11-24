@@ -60,16 +60,27 @@ builder.Services
         };
     });
 
-// Banco de Dados (Oracle no runtime)
+// Banco de Dados:
+// - Testing: InMemory
+// - Development: Oracle (FIAP)
+// - Production (Azure): SQL Server (Azure SQL)
 builder.Services.AddDbContext<AvantDbContext>(options =>
 {
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
     if (builder.Environment.IsEnvironment("Testing"))
     {
         options.UseInMemoryDatabase("AvantDbTests");
     }
+    else if (builder.Environment.IsDevelopment())
+    {
+        // Ambiente local / FIAP usando Oracle
+        options.UseOracle(connectionString);
+    }
     else
     {
-        options.UseOracle(builder.Configuration.GetConnectionString("DefaultConnection"));
+        // Ambiente de produção (Azure) usando Azure SQL
+        options.UseSqlServer(connectionString);
     }
 });
 
@@ -131,8 +142,9 @@ app.MapHealthChecks("/health");
 
 app.MapControllers();
 
-// Migrações (fora do ambiente de teste)
-if (!app.Environment.IsEnvironment("Testing"))
+// Migrações automáticas apenas em Development (Oracle FIAP)
+// No Azure (Production), o banco será criado via script-bd.sql
+if (app.Environment.IsDevelopment())
 {
     using (var scope = app.Services.CreateScope())
     {
@@ -140,6 +152,7 @@ if (!app.Environment.IsEnvironment("Testing"))
         await context.Database.MigrateAsync();
     }
 }
+
 
 app.Run();
 
