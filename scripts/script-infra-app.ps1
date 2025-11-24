@@ -1,107 +1,105 @@
-Param(
-    [string]$Prefix = "loginapi",       # prefixo pra nomear recursos
-    [string]$Location = "brazilsouth"   # região da Azure
+<#
+    Script de provisionamento da infraestrutura na Azure
+    TCC DevOps - Avant API
+
+    Recursos criados:
+    - Resource Group
+    - App Service Plan (Linux)
+    - Web App (.NET 9)
+    - Azure SQL Server
+    - Azure SQL Database
+    - Connection String (DefaultConnection) no Web App
+
+    Uso (exemplo no Cloud Shell / PowerShell):
+
+    ./script-infra-app.ps1 `
+        -prefix "avantgs2" `
+        -location "brazilsouth" `
+        -sqlAdmin "avantadmin" `
+        -sqlPassword "SuaSenhaForteAqui123!"
+
+#>
+
+param(
+    [string]$prefix = "avant",
+    [string]$location = "brazilsouth",
+    [string]$sqlAdmin = "avantadmin",
+    [string]$sqlPassword
 )
 
-# --- Validações básicas ---
-if (-not $env:AZ_SQL_ADMIN_LOGIN -or -not $env:AZ_SQL_ADMIN_PASSWORD) {
-    Write-Error "As variáveis de ambiente AZ_SQL_ADMIN_LOGIN e AZ_SQL_ADMIN_PASSWORD precisam estar definidas."
-    exit 1
+if (-not $sqlPassword) {
+    throw "Parâmetro -sqlPassword é obrigatório. Use -sqlPassword 'SenhaBemForte123!'."
 }
 
-# Pega subscription atual (opcional, só pra log)
-$subscriptionId = $env:AZ_SUBSCRIPTION_ID
-if (-not $subscriptionId) {
-    $subscriptionId = az account show --query id -o tsv
-}
-Write-Host "Usando subscription: $subscriptionId"
+# Nomes dos recursos baseados no prefixo
+$rg   = "$prefix-rg"
+$plan = "$prefix-plan"
+$app  = "$prefix-webapp"
+$sql  = "$prefix-sqlserver"
+$db   = "$prefix-db"
 
-# --- Nomes dos recursos (derivados do prefixo) ---
-$rgName      = "$Prefix-rg"
-$sqlServer   = "$Prefix-sqlsrv"
-$sqlDb       = "$Prefix-db"
-$appPlan     = "$Prefix-asp"
-$webAppName  = "$Prefix-webapi"
+Write-Output "============================================="
+Write-Output " Iniciando provisionamento da infraestrutura "
+Write-Output " Prefixo: $prefix"
+Write-Output " Localização: $location"
+Write-Output "============================================="
 
-Write-Host "Criando recursos com prefixo: $Prefix"
-Write-Host "Resource Group: $rgName"
-Write-Host "SQL Server: $sqlServer"
-Write-Host "SQL DB: $sqlDb"
-Write-Host "App Service Plan: $appPlan"
-Write-Host "Web App: $webAppName"
-Write-Host ""
-
-# --- 1) Resource Group ---
-Write-Host "==> Criando Resource Group..."
+Write-Output "`n[1/5] Criando Resource Group..."
 az group create `
-  --name $rgName `
-  --location $Location `
-  --output table
+    --name $rg `
+    --location $location `
+    | Out-Null
 
-# --- 2) SQL Server ---
-Write-Host "==> Criando SQL Server..."
-az sql server create `
-  --name $sqlServer `
-  --resource-group $rgName `
-  --location $Location `
-  --admin-user $env:AZ_SQL_ADMIN_LOGIN `
-  --admin-password $env:AZ_SQL_ADMIN_PASSWORD `
-  --output table
-
-# --- 3) Regra de firewall para permitir serviços Azure ---
-Write-Host "==> Criando regra de firewall para acesso a partir dos serviços Azure..."
-az sql server firewall-rule create `
-  --resource-group $rgName `
-  --server $sqlServer `
-  --name "AllowAzureServices" `
-  --start-ip-address 0.0.0.0 `
-  --end-ip-address 0.0.0.0 `
-  --output table
-
-# --- 4) Banco de dados SQL ---
-Write-Host "==> Criando banco de dados SQL..."
-az sql db create `
-  --resource-group $rgName `
-  --server $sqlServer `
-  --name $sqlDb `
-  --service-objective S0 `
-  --output table
-
-# --- 5) App Service Plan ---
-Write-Host "==> Criando App Service Plan..."
+Write-Output "[2/5] Criando App Service Plan (Linux)..."
 az appservice plan create `
-  --name $appPlan `
-  --resource-group $rgName `
-  --location $Location `
-  --sku B1 `
-  --output table
+    --name $plan `
+    --resource-group $rg `
+    --sku B1 `
+    --is-linux `
+    | Out-Null
 
-# --- 6) Web App (.NET) ---
-Write-Host "==> Criando Web App..."
+Write-Output "[3/5] Criando Web App (.NET 9, Linux)..."
 az webapp create `
-  --name $webAppName `
-  --resource-group $rgName `
-  --plan $appPlan `
-  --runtime "DOTNET:8" `
-  --output table
+    --name $app `
+    --resource-group $rg `
+    --plan $plan `
+    --runtime "DOTNET|9.0" `
+    | Out-Null
 
-# --- 7) String de conexão do Web App ---
-Write-Host "==> Configurando string de conexão no Web App..."
-# Monta a connection string padrão (ajuste o nome 'DefaultConnection' se sua API usar outro)
-$connectionString = "Server=tcp:$sqlServer.database.windows.net,1433;Initial Catalog=$sqlDb;User ID=$($env:AZ_SQL_ADMIN_LOGIN);Password=$($env:AZ_SQL_ADMIN_PASSWORD);Encrypt=True;Connection Timeout=30;"
+Write-Output "[4/5] Criando Azure SQL Server..."
+az sql server create `
+    --name $sql `
+    --resource-group $rg `
+    --location $location `
+    --admin-user $sqlAdmin `
+    --admin-password $sqlPassword `
+    | Out-Null
 
+Write-Output "[5/5] Criando Azure SQL Database..."
+az sql db create `
+    --resource-group $rg `
+    --server $sql `
+    --name $db `
+    --service-objective S0 `
+    | Out-Null
+
+# Monta a connection string para SQL Azure
+$connectionString = "Server=tcp:$sql.database.windows.net,1433;Initial Catalog=$db;Persist Security Info=False;User ID=$sqlAdmin;Password=$sqlPassword;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;"
+
+Write-Output "`nConfigurando Connection String 'DefaultConnection' no Web App..."
 az webapp config connection-string set `
-  --resource-group $rgName `
-  --name $webAppName `
-  --settings DefaultConnection=$connectionString `
-  --connection-string-type SQLAzure `
-  --output table
+    --resource-group $rg `
+    --name $app `
+    --settings DefaultConnection="$connectionString" `
+    --connection-string-type SQLAzure `
+    | Out-Null
 
-Write-Host ""
-Write-Host "==============================="
-Write-Host "Provisionamento concluído!"
-Write-Host "Resource Group: $rgName"
-Write-Host "Web App: $webAppName"
-Write-Host "SQL Server: $sqlServer"
-Write-Host "SQL DB: $sqlDb"
-Write-Host "==============================="
+Write-Output "`nProvisionamento concluído com sucesso!"
+Write-Output "Resource Group........: $rg"
+Write-Output "App Service Plan......: $plan"
+Write-Output "Web App...............: $app"
+Write-Output "SQL Server............: $sql"
+Write-Output "SQL Database..........: $db"
+Write-Output "`nImportante:"
+Write-Output "- A API, em ambiente Production, usará UseSqlServer com a connection string 'DefaultConnection'."
+Write-Output "- Dados sensíveis ficaram só na configuração do Web App, não no código."
